@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/joho/godotenv"
@@ -23,6 +26,32 @@ func main() {
 	}
 
 	checkAccountBalance(client, address)
+
+	account()
+}
+
+func account() (*ecdsa.PrivateKey, common.Address, string) {
+	privateKey, err := crypto.GenerateKey()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	pkBytes := crypto.FromECDSA(privateKey)
+	log.Printf("Private key: %x", pkBytes)
+	pkHex := hexutil.Encode(pkBytes)
+
+	publicKey := privateKey.Public()
+	pubECDSA, ok := publicKey.(*ecdsa.PublicKey)
+	if !ok {
+		log.Fatal("error casting public key to ECDSA")
+	}
+
+	pubBytes := crypto.FromECDSAPub(pubECDSA)
+	log.Printf("Public key: %x", pubBytes)
+
+	address := crypto.PubkeyToAddress(*pubECDSA)
+
+	return privateKey, address, pkHex
 }
 
 func checkAccountBalance(client *ethclient.Client, address common.Address) {
