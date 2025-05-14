@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ecdsa"
+	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -52,6 +53,20 @@ func account() (*ecdsa.PrivateKey, common.Address, string) {
 	address := crypto.PubkeyToAddress(*pubECDSA)
 
 	return privateKey, address, pkHex
+}
+
+func signMessage(privateKey *ecdsa.PrivateKey, message string) ([]byte, error) {
+
+	prefix := fmt.Sprintf("\x19Ethereum Signed Message:\n%d%s", len(message), message)
+	prefixed := []byte(prefix + message)
+	messageHash := crypto.Keccak256(prefixed)
+
+	signature, err := crypto.Sign(messageHash, privateKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return signature, nil
 }
 
 func checkAccountBalance(client *ethclient.Client, address common.Address) {
