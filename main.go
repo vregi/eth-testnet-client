@@ -28,7 +28,32 @@ func main() {
 
 	checkAccountBalance(client, address)
 
-	account()
+	privateKey, _, _ := account()
+	publicKey := privateKey.Public()
+	publicKeyECDSA, ok := publicKey.(*ecdsa.PublicKey)
+	if !ok {
+		log.Fatal("error casting public key to ECDSA")
+	}
+
+	message := "Hello, Ethereum!"
+
+	signature, err := signMessage(privateKey, message)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Printf("Signature: %s", signature)
+
+	valid, err := verifySignature(message, signature, publicKeyECDSA)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if valid {
+		log.Printf("Signature valid")
+	} else {
+		log.Printf("Signature invalid")
+	}
 }
 
 func account() (*ecdsa.PrivateKey, common.Address, string) {
@@ -57,7 +82,7 @@ func account() (*ecdsa.PrivateKey, common.Address, string) {
 
 func signMessage(privateKey *ecdsa.PrivateKey, message string) ([]byte, error) {
 
-	prefix := fmt.Sprintf("\x19Ethereum Signed Message:\n%d%s", len(message), message)
+	prefix := fmt.Sprintf("\x19Ethereum Signed Message:\n%d%s", len(message))
 	prefixed := []byte(prefix + message)
 	messageHash := crypto.Keccak256(prefixed)
 
@@ -67,6 +92,20 @@ func signMessage(privateKey *ecdsa.PrivateKey, message string) ([]byte, error) {
 	}
 
 	return signature, nil
+}
+
+func verifySignature(message string, signature []byte, publicKey *ecdsa.PublicKey) (bool, error) {
+
+	prefix := fmt.Sprintf("\x19Ethereum Signed Message:\n%s", len(message))
+	prefixed := []byte(prefix + message)
+	messageHash := crypto.Keccak256(prefixed)
+
+	sigPublicKey, err := crypto.SigToPub(messageHash, signature)
+	if err != nil {
+		return false, err
+	}
+
+	return publicKey.X.Cmp(sigPublicKey.X) == 0 && publicKey.Y.Cmp(sigPublicKey.Y) == 0, nil // comparing keys based on elliptic curve
 }
 
 func checkAccountBalance(client *ethclient.Client, address common.Address) {
