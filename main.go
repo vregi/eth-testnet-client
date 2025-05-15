@@ -81,12 +81,7 @@ func account() (*ecdsa.PrivateKey, common.Address, string) {
 }
 
 func signMessage(privateKey *ecdsa.PrivateKey, message string) ([]byte, error) {
-
-	prefix := fmt.Sprintf("\x19Ethereum Signed Message:\n%d%s", len(message))
-	prefixed := []byte(prefix + message)
-	messageHash := crypto.Keccak256(prefixed)
-
-	signature, err := crypto.Sign(messageHash, privateKey)
+	signature, err := crypto.Sign(hashMessage(message), privateKey)
 	if err != nil {
 		return nil, err
 	}
@@ -94,12 +89,16 @@ func signMessage(privateKey *ecdsa.PrivateKey, message string) ([]byte, error) {
 	return signature, nil
 }
 
+func hashMessage(message string) []byte {
+	prefixedMessage := fmt.Sprintf("\x19Ethereum Signed Message:\n%d%s", len(message), message)
+	messageHash := crypto.Keccak256([]byte(prefixedMessage))
+
+	return messageHash
+}
+
 func verifySignature(message string, signature []byte, publicKey *ecdsa.PublicKey) (bool, error) {
 
-	prefix := fmt.Sprintf("\x19Ethereum Signed Message:\n%s", len(message))
-	prefixed := []byte(prefix + message)
-	messageHash := crypto.Keccak256(prefixed)
-
+	messageHash := hashMessage(message)
 	sigPublicKey, err := crypto.SigToPub(messageHash, signature)
 	if err != nil {
 		return false, err
