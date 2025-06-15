@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/params"
@@ -20,13 +21,16 @@ func main() {
 		log.Fatal("Error loading .env file")
 	}
 
-	address := common.HexToAddress(os.Getenv("ADDRESS"))
+	toAddress := common.HexToAddress(os.Getenv("TO_ADDRESS"))
+	toAddressHex := os.Getenv("TO_ADDRESS")
 	client, err := ethclient.Dial(os.Getenv("NET_URL"))
+	privateKeyHex := os.Getenv("PRIVATE_KEY")
+	valueInWei := big.NewInt(10000000000000000)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	checkAccountBalance(client, address)
+	checkAccountBalance(client, toAddress)
 
 	privateKey, _, _ := account()
 	publicKey := privateKey.Public()
@@ -54,6 +58,13 @@ func main() {
 	} else {
 		log.Printf("Signature invalid")
 	}
+
+	txHash, err := sendTransaction(client, privateKeyHex, toAddressHex, valueInWei)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.Printf("Transaction sent: %s", txHash)
 }
 
 func account() (*ecdsa.PrivateKey, common.Address, string) {
@@ -78,6 +89,52 @@ func account() (*ecdsa.PrivateKey, common.Address, string) {
 	address := crypto.PubkeyToAddress(*pubECDSA)
 
 	return privateKey, address, pkHex
+}
+
+func sendTransaction(client *ethclient.Client, privateKeyHex string, toAddress string, weiValue *big.Int) (string, error) {
+	privateKey, err := crypto.HexToECDSA(privateKeyHex)
+	if err != nil {
+		return "", fmt.Errorf("error parsing private key: %v", err)
+	}
+
+	fromAddress := crypto.PubkeyToAddress(privateKey.PublicKey)
+
+	nonce, err := client.PendingNonceAt(context.Background(), fromAddress)
+	if err != nil {
+		return "", fmt.Errorf("error getting nonce: %v", err)
+	}
+
+	gasPrice, err := client.SuggestGasPrice(context.Background())
+	if err != nil {
+		return "", fmt.Errorf("error getting gas price: %v", err)
+	}
+	gasLimit := uint64(21000) // default gas
+
+	toAddr := common.HexToAddress(toAddress)
+	tx := types.NewTx(&types.LegacyTx{
+		Nonce:    nonce,
+		GasPrice: gasPrice,
+		Gas:      gasLimit,
+		To:       &toAddr,
+		Value:    weiValue,
+	})
+
+	chainId, err := client.NetworkID(context.Background())
+	if err != nil {
+		return "", fmt.Errorf("error getting chain ID: %v", err)
+	}
+
+	signedTx, err := types.SignTx(tx, types.NewEIP155Signer(chainId), privateKey)
+	if err != nil {
+		return "", fmt.Errorf("error signing transaction: %v", err)
+	}
+
+	err = client.SendTransaction(context.Background(), signedTx)
+	if err != nil {
+		return "", fmt.Errorf("error sending transaction: %v", err)
+	}
+
+	return signedTx.Hash().Hex(), nil
 }
 
 func signMessage(privateKey *ecdsa.PrivateKey, message string) ([]byte, error) {
