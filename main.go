@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ecdsa"
+	"flag"
 	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -14,6 +15,7 @@ import (
 	"log"
 	"math/big"
 	"os"
+	"strconv"
 )
 
 func main() {
@@ -21,50 +23,185 @@ func main() {
 		log.Fatal("Error loading .env file")
 	}
 
-	toAddress := common.HexToAddress(os.Getenv("TO_ADDRESS"))
-	toAddressHex := os.Getenv("TO_ADDRESS")
+	var (
+		command = flag.String("command", "", "Command to execute: create-account, balance, sign-message, send-tx, check-tx")
+		address = flag.String("address", "", "Address to check balance or send to")
+		amount  = flag.String("amount", "", "Amount in ETH to send")
+		message = flag.String("message", "", "Message to sign")
+		txHash  = flag.String("tx", "", "Transaction hash to check")
+	)
+	flag.Parse()
+
 	client, err := ethclient.Dial(os.Getenv("NET_URL"))
-	privateKeyHex := os.Getenv("PRIVATE_KEY")
-	valueInWei := big.NewInt(10000000000000000)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	checkAccountBalance(client, toAddress)
+	switch *command {
+	case "create-account":
+		createAccountCLI()
+	case "balance":
+		if *address == "" {
+			log.Fatal("Address is required for balance command")
+		}
+		balanceCLI(client, *address)
+	case "sign-message":
+		if *message == "" {
+			log.Fatal("Message is required for sign-message command")
+		}
+		signMessageCLI(*message)
+	case "send-tx":
+		if *address == "" || *amount == "" {
+			log.Fatal("Address and amount are required for send-tx command")
+		}
+		sendTxCLI(client, *address, *amount)
+	case "check-tx":
+		if *txHash == "" {
+			log.Fatal("Transaction hash is required for check-tx command")
+		}
+		checkTxCLI(client, *txHash)
+	default:
+		fmt.Println("Available commands:")
+		fmt.Println("  -command=create-account                    Create new account")
+		fmt.Println("  -command=balance -address=<addr>          Check balance")
+		fmt.Println("  -command=sign-message -message=<msg>      Sign message")
+		fmt.Println("  -command=send-tx -address=<addr> -amount=<eth>  Send transaction")
+		fmt.Println("  -command=check-tx -tx=<hash>              Check transaction status")
+	}
+}
 
-	privateKey, _, _ := account()
+func createAccountCLI() {
+	_, address, pkHex := account()
+	fmt.Printf("New account created:\n")
+	fmt.Printf("Address: %s\n", address.Hex())
+	fmt.Printf("Private Key: %s\n", pkHex)
+	fmt.Printf("Save your private key securely!\n")
+}
+
+func balanceCLI(client *ethclient.Client, addressStr string) {
+	address := common.HexToAddress(addressStr)
+	fmt.Printf("Checking balance for address: %s\n", addressStr)
+	checkAccountBalance(client, address)
+}
+
+func signMessageCLI(message string) {
+	privateKeyHex := os.Getenv("PRIVATE_KEY")
+	if privateKeyHex == "" {
+		log.Fatal("PRIVATE_KEY not found in environment")
+	}
+
+	privateKey, err := crypto.HexToECDSA(privateKeyHex)
+	if err != nil {
+		log.Fatal("Error parsing private key:", err)
+	}
+
+	signature, err := signMessage(privateKey, message)
+	if err != nil {
+		log.Fatal("Error signing message:", err)
+	}
+
+	fmt.Printf("Message: %s\n", message)
+	fmt.Printf("Signature: %s\n", hexutil.Encode(signature))
+
+	// verify signature
 	publicKey := privateKey.Public()
 	publicKeyECDSA, ok := publicKey.(*ecdsa.PublicKey)
 	if !ok {
 		log.Fatal("error casting public key to ECDSA")
 	}
 
-	message := "Hello, Ethereum!"
-
-	signature, err := signMessage(privateKey, message)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	log.Printf("Signature: %s", signature)
-
 	valid, err := verifySignature(message, signature, publicKeyECDSA)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Error verifying signature:", err)
 	}
 
 	if valid {
-		log.Printf("Signature valid")
+		fmt.Printf("Signature verification: VALID\n")
 	} else {
-		log.Printf("Signature invalid")
+		fmt.Printf("Signature verification: INVALID\n")
+	}
+}
+
+func sendTxCLI(client *ethclient.Client, toAddress, amountStr string) {
+	privateKeyHex := os.Getenv("PRIVATE_KEY")
+	if privateKeyHex == "" {
+		log.Fatal("PRIVATE_KEY not found in environment")
 	}
 
-	txHash, err := sendTransaction(client, privateKeyHex, toAddressHex, valueInWei)
+	// convert ETH to Wei
+	amountFloat, err := strconv.ParseFloat(amountStr, 64)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Invalid amount:", err)
 	}
 
-	log.Printf("Transaction sent: %s", txHash)
+	weiAmount := new(big.Int)
+	weiAmount.SetString(fmt.Sprintf("%.0f", amountFloat*1e18), 10)
+
+	fmt.Printf("Sending %s ETH to %s\n", amountStr, toAddress)
+
+	txHash, err := sendTransaction(client, privateKeyHex, toAddress, weiAmount)
+	if err != nil {
+		log.Fatal("Error sending transaction:", err)
+	}
+
+	fmt.Printf("Transaction sent successfully!\n")
+	fmt.Printf("Transaction Hash: %s\n", txHash)
+	fmt.Printf("Check transaction status with: -command=check-tx -tx=%s\n", txHash)
+}
+
+func checkTxCLI(client *ethclient.Client, txHashStr string) {
+	txHash := common.HexToHash(txHashStr)
+
+	fmt.Printf("Checking transaction: %s\n", txHashStr)
+
+	tx, isPending, err := client.TransactionByHash(context.Background(), txHash)
+	if err != nil {
+		log.Fatal("Transaction not found:", err)
+	}
+
+	if isPending {
+		fmt.Printf("Status: PENDING\n")
+	} else {
+		fmt.Printf("Status: CONFIRMED\n")
+	}
+
+	fmt.Printf("From: %s\n", getSenderAddress(tx))
+	if tx.To() != nil {
+		fmt.Printf("To: %s\n", tx.To().Hex())
+	}
+	fmt.Printf("Value: %s ETH\n", weiToEther(tx.Value()))
+	fmt.Printf("Gas Price: %s Gwei\n", weiToGwei(tx.GasPrice()))
+	fmt.Printf("Gas Limit: %d\n", tx.Gas())
+
+	receipt, err := client.TransactionReceipt(context.Background(), txHash)
+	if err == nil {
+		fmt.Printf("Block Number: %d\n", receipt.BlockNumber.Uint64())
+		fmt.Printf("Gas Used: %d\n", receipt.GasUsed)
+		if receipt.Status == 1 {
+			fmt.Printf("Transaction Status: SUCCESS\n")
+		} else {
+			fmt.Printf("Transaction Status: FAILED\n")
+		}
+	} else {
+		fmt.Printf("Receipt not yet available (transaction may be pending)\n")
+	}
+}
+
+func getSenderAddress(tx *types.Transaction) string {
+	chainID := big.NewInt(1)
+	signer := types.NewEIP155Signer(chainID)
+
+	from, err := types.Sender(signer, tx)
+	if err != nil {
+		return "Unknown"
+	}
+	return from.Hex()
+}
+
+func weiToGwei(wei *big.Int) *big.Float {
+	gwei := new(big.Float).SetInt(wei)
+	gwei.Quo(gwei, big.NewFloat(1e9))
+	return gwei
 }
 
 func account() (*ecdsa.PrivateKey, common.Address, string) {
@@ -154,7 +291,6 @@ func hashMessage(message string) []byte {
 }
 
 func verifySignature(message string, signature []byte, publicKey *ecdsa.PublicKey) (bool, error) {
-
 	messageHash := hashMessage(message)
 	sigPublicKey, err := crypto.SigToPub(messageHash, signature)
 	if err != nil {
